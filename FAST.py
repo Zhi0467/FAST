@@ -116,17 +116,23 @@ class FAST(nn.Module):
         num_heads = config.num_heads
         num_layers = config.num_layers
         dropout = config.dropout
+        self.use_spatial_projection = getattr(config, 'use_spatial_projection', True)
 
         self.n_tokens = (seq_len - window_len) // slide_step + 1
         # print('** n_tokens:', self.n_tokens, 'from', seq_len, window_len, slide_step)
         # print('** dim_cnn:', dim_cnn, 'dim_token:', dim_token)
 
         self.head = Head(head, electrodes, zone_dict, dim_cnn)
-        self.input_layer = nn.Sequential(nn.Linear(dim_cnn * len(zone_dict), dim_token), nn.GELU())
-        self.transformer = nn.Sequential(*[AttentionBlock(dim_token, dim_token*2, num_heads, dropout=dropout) for _ in range(num_layers)])
-        self.pos_embedding = nn.Parameter(torch.randn(1, self.n_tokens + 1, dim_token))
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim_token))
-        self.last_layer = nn.Linear(dim_token, n_classes) 
+        if self.use_spatial_projection:
+            transformer_dim = dim_token
+            self.input_layer = nn.Sequential(nn.Linear(dim_cnn * len(zone_dict), dim_token), nn.GELU())
+        else:
+            transformer_dim = dim_cnn * len(zone_dict)
+            self.input_layer = nn.Identity() # no input layer for non-spatial projection
+        self.transformer = nn.Sequential(*[AttentionBlock(transformer_dim, transformer_dim*2, num_heads, dropout=dropout) for _ in range(num_layers)])
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.n_tokens + 1, transformer_dim))
+        self.cls_token = nn.Parameter(torch.randn(1, 1, transformer_dim))
+        self.last_layer = nn.Linear(transformer_dim, n_classes)
         self.dropout = nn.Dropout(dropout)
 
     def forward_head(self, x, step_override = None):
@@ -208,6 +214,7 @@ if __name__ == '__main__':
         num_layers=4,
         num_heads=8,
         dropout=0.1,
+        use_spatial_projection=True,
     )
     model = FAST(config)
     x = torch.randn(10, len(Example_Electrodes), config.seq_len)

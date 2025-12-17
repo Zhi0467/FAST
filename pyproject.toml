@@ -16,6 +16,7 @@ dependencies = [
     "torch",
     "torchmetrics",
     "transformers",
+    "mamba_ssm; sys_platform != 'darwin'",
 ]
 
 [build-system]
