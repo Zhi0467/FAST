@@ -5,8 +5,13 @@
 #   - Model: transformer, mamba2
 #   - Spatial Projection: True, False
 
+# use USE_NINJA=1 MAX_JOBS=8 uv sync to build deps
+
 # Ensure the script stops on error
 set -e
+
+# process data
+uv run python BCIC2020Track3_preprocess.py
 
 # Loop through models
 for model in "transformer" "mamba2"; do
@@ -19,6 +24,11 @@ for model in "transformer" "mamba2"; do
         # Run the training script
         # Using default accelerator (mps) as per train.py default, or override if needed.
         # Assuming running on the machine where train.py is located.
+        # except for model "mamba2", use_spatial_projection is True
+        # we skip that one for now
+        if [ "$model" == "mamba2" ] && [ "$proj" == "False" ]; then
+            continue
+        fi
         python train.py \
             --model "$model" \
             --use_spatial_projection "$proj" \

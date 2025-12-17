@@ -18,6 +18,8 @@ from __future__ import annotations
 import einops
 import torch
 import torch.nn as nn
+from transformers import PretrainedConfig
+from BCIC2020Track3_preprocess import Electrodes, Zones
 
 # Reuse the CNN tokenization head from the original FAST implementation.
 from FAST import Head  # noqa: E402
@@ -194,3 +196,29 @@ class FAST_Mamba2(nn.Module):
             return self.forward_mamba(x)
         else:
             raise NotImplementedError(f"Unknown forward_mode: {forward_mode}")
+
+if __name__ == "__main__":
+    sfreq = 250
+    config = PretrainedConfig(
+        electrodes=Electrodes,
+        zone_dict=Zones,
+        dim_cnn=32,
+        dim_token=32,
+        seq_len=800,
+        window_len=sfreq,
+        slide_step=sfreq // 2,
+        head="Conv4Layers",
+        n_classes=5,
+        num_layers=4,   # number of Mamba2 blocks
+        num_heads=8,    # kept for compatibility (unused)
+        dropout=0.1,
+        # Mamba2 hyperparams
+        mamba_d_state=64,
+        mamba_d_conv=4,
+        mamba_expand=2,
+        mamba_headdim=64,
+        mamba_ngroups=1,
+        use_spatial_projection=False,
+    )
+    model = FAST_Mamba2(config)
+    print("initialized mamba2")

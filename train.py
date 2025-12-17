@@ -181,7 +181,7 @@ def main():
     else:
         args.folds = [int(x) for x in args.folds.split(',')]
 
-    Run = f"Results/FAST-{args.model}/"
+    Run = f"Results/FAST-{args.model}-spatial_projection-{args.use_spatial_projection}/"
     os.makedirs(f"{Run}", exist_ok=True)
 
     sfreq = 250
