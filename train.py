@@ -154,6 +154,16 @@ def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=N
     Pred, Real = np.concatenate(Pred), np.concatenate(Real)
     np.savetxt(logf, np.array([Pred, Real]).T, delimiter=',', fmt='%d')
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
 def main():
     args = argparse.ArgumentParser()
     args.add_argument('--gpu', type=int, default=0)
@@ -162,7 +172,7 @@ def main():
     args.add_argument('--accelerator', type=str, default='mps')
     args.add_argument('--folds', type=str, default='0-15')
     args.add_argument('--model', choices=['transformer', 'mamba2'], default='transformer')
-    args.add_argument('--use_spatial_projection', type=bool, default=True)
+    args.add_argument('--use_spatial_projection', type=str2bool, default=True)
     args = args.parse_args()
 
     if '-' in args.folds:
@@ -233,6 +243,10 @@ def main():
         data = np.loadtxt(flog, delimiter=',', dtype=int)
         pred, label = data[:, 0], data[:, 1]
         accuracies[fold] = np.mean(pred == label)
+
+    if accuracies:
+        acc_data = np.array([[k, accuracies[k]] for k in sorted(accuracies.keys())])
+        np.savetxt(f"{Run}/accuracies.csv", acc_data, delimiter=',', header="Fold,Accuracy", fmt=['%d', '%.4f'], comments='')
     
     return args.model, args.use_spatial_projection, accuracies 
 
