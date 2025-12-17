@@ -19,6 +19,7 @@ dependencies = [
     "torchmetrics",
     "transformers",
     "mamba_ssm; sys_platform != 'darwin'",
+    "causal-conv1d>=1.4.0; sys_platform != 'darwin'",
 ]
 
 [build-system]

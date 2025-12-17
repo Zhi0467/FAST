@@ -68,19 +68,25 @@ def load_standardized_h5(cache_fn):
 
 def inference_on_loader(model, loader):
     model.eval()
-    # Detect device from the model parameters (works for cpu, cuda, mps)
-    device = next(model.parameters()).device
-    
+
+    # Prefer CUDA for Mamba2; Lightning may move the model back to CPU after training
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        model = model.to(device)
+    else:
+        # Fall back to whatever device the model currently resides on
+        device = next(model.parameters()).device
+
     with torch.no_grad():
         Pred, Real = [], []
         for x, y in loader:
             # Move input to the same device as the model
-            x = x.to(device)
-            
+            x = x.to(device, non_blocking=True)
+
             # Forward pass
             logits = model(x)
             preds = torch.argmax(logits, dim=1).cpu()
-            
+
             Pred.append(preds)
             Real.append(y)
         Pred, Real = torch.cat(Pred), torch.cat(Real)

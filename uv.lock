@@ -168,6 +168,17 @@ wheels = [
 ]
 
 [[package]]
+name = "causal-conv1d"
+version = "1.5.3.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ninja" },
+    { name = "packaging" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/cb/104778c728dc3d5ea3bf65a484e3a4cdbe894bdaa2586320e2f61d007b8c/causal_conv1d-1.5.3.post1.tar.gz", hash = "sha256:aba1b717484472d0b2f2e40520a1c03f35fe5155555bd753d1c324afc56ba468", size = 24198, upload-time = "2025-10-10T10:16:23.921Z" }
+
+[[package]]
 name = "certifi"
 version = "2025.11.12"
 source = { registry = "https://pypi.org/simple" }
@@ -288,6 +299,7 @@ name = "fast"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "causal-conv1d", marker = "sys_platform != 'darwin'" },
     { name = "einops" },
     { name = "h5py" },
     { name = "lightning" },
@@ -309,6 +321,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "causal-conv1d", marker = "sys_platform != 'darwin'", specifier = ">=1.4.0" },
     { name = "einops" },
     { name = "h5py" },
     { name = "lightning" },
