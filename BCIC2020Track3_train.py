@@ -127,8 +127,12 @@ def Finetune(config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=None):
             model.model.load_state_dict(torch.load(ckpt_pretrain, weights_only=True))
 
         print(yellow(logf), green(ckpt_pretrain), x_train.shape, y_train.shape, x_test.shape, y_test.shape)
-        trainer = pl.Trainer(strategy='auto', accelerator='gpu', devices=[args.gpu], max_epochs=max_epochs, callbacks=[], 
-                            enable_progress_bar=False, enable_checkpointing=False, precision='bf16-mixed', logger=False)
+        if args.accelerator == 'gpu':
+            trainer = pl.Trainer(strategy='auto', accelerator='gpu', devices=[args.gpu], max_epochs=max_epochs, callbacks=[], 
+                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False)
+        elif args.accelerator == 'mps':
+            trainer = pl.Trainer(strategy='auto', accelerator='mps', devices=1, max_epochs=max_epochs, callbacks=[], 
+                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False)
         trainer.fit(model, train_dataloaders=train_loader)
 
         # Test data is used only once
@@ -141,6 +145,9 @@ def Finetune(config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=None):
 if __name__ == '__main__':
     args = argparse.ArgumentParser()
     args.add_argument('--gpu', type=int, default=0)
+    # default to mps training because I use a macbook 
+    # but switch to gpu whenever Nvidia is in the room
+    args.add_argument('--accelerator', type=str, default='mps')
     args.add_argument('--folds', type=str, default='0-15')
     args = args.parse_args()
 

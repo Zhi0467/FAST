@@ -1,0 +1,23 @@
+[project]
+name = "fast"
+version = "0.1.0"
+description = "Functional Areas Spatio-Temporal Transformer"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "einops",
+    "h5py",
+    "lightning",
+    "numpy",
+    "pandas",
+    "pytorch-lightning",
+    "scikit-learn",
+    "scipy",
+    "torch",
+    "torchmetrics",
+    "transformers",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
