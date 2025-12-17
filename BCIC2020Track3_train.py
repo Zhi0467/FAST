@@ -67,11 +67,15 @@ def load_standardized_h5(cache_fn):
 
 def inference_on_loader(model, loader):
     model.eval()
-    model.cuda()
+    if torch.cuda.is_available():
+        model.cuda()
     with torch.no_grad():
         Pred, Real = [], []
         for x, y in loader:
-            preds = torch.argmax(model(x.cuda()), dim=1).cpu()
+            if torch.cuda.is_available():
+                preds = torch.argmax(model(x.cuda()), dim=1).cpu()
+            else:
+                preds = torch.argmax(model(x), dim=1)
             Pred.append(preds)
             Real.append(y)
         Pred, Real = torch.cat(Pred), torch.cat(Real)
