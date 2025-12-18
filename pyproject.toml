@@ -20,6 +20,8 @@ dependencies = [
     "transformers",
     "mamba_ssm; sys_platform != 'darwin'",
     "causal-conv1d>=1.4.0; sys_platform != 'darwin'",
+    "matplotlib>=3.10.8",
+    "seaborn>=0.13.2",
 ]
 
 [build-system]
