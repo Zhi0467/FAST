@@ -3,6 +3,9 @@ Decoding Covert Speech from EEG Using a Functional Areas Spatio-Temporal Transfo
 Code for reproducing results on BCI Competition 2020 Track #3: Imagined Speech Classification.
 Currently under review for publication.
 Contact: James Jiang Muyun (james.jiang@ntu.edu.sg)
+
+Note: If Matplotlib cache warnings appear in this repo, run scripts with:
+    MPLCONFIGDIR=/tmp/matplotlib XDG_CACHE_HOME=/tmp/cache
 """
 
 import os
@@ -28,7 +31,6 @@ logging.getLogger('lightning').setLevel(logging.WARNING)
 
 from FAST import FAST
 from FAST_mamba import FAST_Mamba2
-from sinc_mamba import EEG_SincMamba
 from utils import green, yellow
 from BCIC2020Track3_preprocess import Electrodes, Zones
 
@@ -115,18 +117,21 @@ class EEG_Encoder_Module(pl.LightningModule):
         elif model_type == 'mamba2':
             self.model = FAST_Mamba2(config)
         elif model_type == 'sincmamba':
+            from sinc_mamba import EEG_SincMamba
             self.model = EEG_SincMamba(
                 num_electrodes=config.num_electrodes,
                 num_sinc_filters=config.num_sinc_filters,
                 sinc_kernel=config.sinc_kernel,
                 d_model=config.d_model,
                 num_classes=config.n_classes,
+                input_len=config.seq_len,
+                sample_rate=getattr(config, "sinc_fs", 250),
                 backend=config.sinc_backend,
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
         self.loss = nn.CrossEntropyLoss()
-        self.cosine_lr_list = cosine_scheduler(1, 0.1, max_epochs, niter_per_ep, warmup_epochs=10)
+        self.cosine_lr_list = cosine_scheduler(1, 0.1, max_epochs, niter_per_ep, warmup_epochs=min(10, max_epochs))
         self.accuracy = torchmetrics.Accuracy('multiclass', num_classes = config.n_classes)
 
     def configure_optimizers(self):
@@ -137,20 +142,41 @@ class EEG_Encoder_Module(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         pred = self.model(x)
-        return self.loss(pred, y)
+        loss = self.loss(pred, y)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        return loss
 
 def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=None, model_type='transformer'):
     seed_all(42)
     Pred, Real = [], []
     kf = KFold(n_splits=5, shuffle=False)
-    for _train_idx, _test_idx in kf.split(Data_X):
+    for split_idx, (_train_idx, _test_idx) in enumerate(kf.split(Data_X), start=1):
         x_train, y_train = Data_X[_train_idx], Data_Y[_train_idx]
         x_test, y_test = Data_X[_test_idx], Data_Y[_test_idx]
+        print(f"KFold split {split_idx}/5: train={len(x_train)} test={len(x_test)}")
+
+        num_workers = 0 if args.accelerator == 'cpu' else os.cpu_count()
+        persistent_workers = num_workers > 0
+        pin_memory = args.accelerator == 'gpu'
 
         train_data = BasicDataset(x_train, y_train)
-        train_loader = DataLoader(train_data, batch_size=len(x_train), shuffle=True, num_workers=os.cpu_count(), persistent_workers=True, pin_memory=True)
+        train_loader = DataLoader(
+            train_data,
+            batch_size=len(x_train),
+            shuffle=True,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            pin_memory=pin_memory,
+        )
         test_data = BasicDataset(x_test, y_test)
-        test_loader = DataLoader(test_data, batch_size=len(x_test), shuffle=False, num_workers=os.cpu_count(), persistent_workers=True, pin_memory=True)
+        test_loader = DataLoader(
+            test_data,
+            batch_size=len(x_test),
+            shuffle=False,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            pin_memory=pin_memory,
+        )
 
         model = EEG_Encoder_Module(config, max_epochs, len(train_loader), model_type)
         if ckpt_pretrain is not None:
@@ -159,13 +185,16 @@ def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=N
         print(yellow(logf), green(ckpt_pretrain), x_train.shape, y_train.shape, x_test.shape, y_test.shape)
         if args.accelerator == 'gpu':
             trainer = pl.Trainer(strategy='auto', accelerator='gpu', devices=[args.gpu], max_epochs=max_epochs, callbacks=[], 
-                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False)
+                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False,
+                            log_every_n_steps=args.log_every_n_steps)
         elif args.accelerator == 'mps':
             trainer = pl.Trainer(strategy='auto', accelerator='mps', devices=1, max_epochs=max_epochs, callbacks=[], 
-                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False)
+                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False,
+                            log_every_n_steps=args.log_every_n_steps)
         elif args.accelerator == 'cpu':
             trainer = pl.Trainer(strategy='auto', accelerator='cpu', devices=1, max_epochs=max_epochs, callbacks=[],
-                            enable_progress_bar=True, enable_checkpointing=False, precision=32, logger=False)
+                            enable_progress_bar=True, enable_checkpointing=False, precision=32, logger=False,
+                            log_every_n_steps=args.log_every_n_steps)
         else:
             raise ValueError(f"Unknown accelerator: {args.accelerator}")
         trainer.fit(model, train_dataloaders=train_loader)
@@ -196,6 +225,8 @@ def main():
     args.add_argument('--folds', type=str, default='0-15')
     args.add_argument('--model', choices=['transformer', 'mamba2', 'sincmamba'], default='transformer')
     args.add_argument('--use_spatial_projection', type=str2bool, default=True)
+    args.add_argument('--max_epochs', type=int, default=200)
+    args.add_argument('--log_every_n_steps', type=int, default=1)
     args.add_argument('--sinc_filters', type=int, default=8)
     args.add_argument('--sinc_kernel', type=int, default=65)
     args.add_argument('--sinc_d_model', type=int, default=64)
@@ -229,6 +260,9 @@ def main():
     Run = f"Results/FAST-{args.model}-spatial_projection-{args.use_spatial_projection}/"
     os.makedirs(f"{Run}", exist_ok=True)
 
+    X, Y = load_standardized_h5('Processed/BCIC2020Track3.h5')
+    input_len = X.shape[-1]
+
     sfreq = 250
     if args.model == 'transformer':
         config = PretrainedConfig(
@@ -236,7 +270,7 @@ def main():
             zone_dict=Zones,
             dim_cnn=32,
             dim_token=32,
-            seq_len=800,
+            seq_len=input_len,
             window_len=sfreq,
             slide_step=sfreq//2,
             head='Conv4Layers',
@@ -252,7 +286,7 @@ def main():
             zone_dict=Zones,
             dim_cnn=32,
             dim_token=32,
-            seq_len=800,
+            seq_len=input_len,
             window_len=sfreq,
             slide_step=sfreq // 2,
             head="Conv4Layers",
@@ -276,9 +310,10 @@ def main():
             sinc_kernel=args.sinc_kernel,
             d_model=args.sinc_d_model,
             sinc_backend=args.sinc_backend,
+            seq_len=input_len,
+            sinc_fs=sfreq,
         )
-        
-    X, Y = load_standardized_h5('Processed/BCIC2020Track3.h5')
+
     for fold in range(15):
         if fold not in args.folds:
             continue
@@ -286,7 +321,7 @@ def main():
         if os.path.exists(flog):
             print(f"Skip {flog}")
             continue
-        Finetune(args, config, X[fold], Y[fold], flog, max_epochs=200, model_type=args.model)
+        Finetune(args, config, X[fold], Y[fold], flog, max_epochs=args.max_epochs, model_type=args.model)
 
     accuracies = {}
     for fold in range(15):

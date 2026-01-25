@@ -1,3 +1,11 @@
+"""
+Plot model accuracies from Results/*/accuracies.csv.
+
+If Matplotlib cache warnings appear, run with:
+    MPLCONFIGDIR=/tmp/matplotlib XDG_CACHE_HOME=/tmp/cache
+Set FAST_PLOT_SHOW=0 to skip interactive display in headless runs.
+"""
+
 import os
 import glob
 import pandas as pd
@@ -65,9 +73,13 @@ def main():
     plt.savefig(output_path, dpi=300)
     print(f"\nPlot saved to {output_path}")
     
-    # Show the plot
-    plt.show()
+    # Show the plot unless explicitly disabled
+    show_plot = os.environ.get("FAST_PLOT_SHOW", "1").lower() in ("1", "true", "yes", "y")
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+        print("Skipping interactive display (FAST_PLOT_SHOW=0).")
 
 if __name__ == "__main__":
     main()
-
