@@ -26,14 +26,22 @@ python BCIC2020Track3_preprocess.py
 The processed data will be saved in `Processed/BCIC2020Track3.h5`
 
 ## Training the Model
-- To train the model, run:
+- To train the transformer model, run:
 ```bash
-python3 BCIC2020Track3_train.py --gpu 0 --folds "0-15"
-# more than one GPU ?
-# bash BCIC2020Track3_run.sh
+python train.py --model transformer --accelerator gpu --gpu 0 --folds "0-15"
 ```
 
-After training, results will be saved in the `Results/FAST` directory, results will be automatically print out.
+- For Mamba2 (CUDA required), run:
+```bash
+python train.py --model mamba2 --accelerator gpu --gpu 0 --folds "0-15"
+```
+
+- To sweep all configs:
+```bash
+bash sweep.sh
+```
+
+After training, results are saved under `Results/FAST-<model>-spatial_projection-<True|False>/` with per-fold CSVs and `accuracies.csv`.
 
 # Cite
 Please cite our paper if you find this work is useful to you:

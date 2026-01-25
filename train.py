@@ -28,6 +28,7 @@ logging.getLogger('lightning').setLevel(logging.WARNING)
 
 from FAST import FAST
 from FAST_mamba import FAST_Mamba2
+from sinc_mamba import EEG_SincMamba
 from utils import green, yellow
 from BCIC2020Track3_preprocess import Electrodes, Zones
 
@@ -113,6 +114,17 @@ class EEG_Encoder_Module(pl.LightningModule):
             self.model = FAST(config)
         elif model_type == 'mamba2':
             self.model = FAST_Mamba2(config)
+        elif model_type == 'sincmamba':
+            self.model = EEG_SincMamba(
+                num_electrodes=config.num_electrodes,
+                num_sinc_filters=config.num_sinc_filters,
+                sinc_kernel=config.sinc_kernel,
+                d_model=config.d_model,
+                num_classes=config.n_classes,
+                backend=config.sinc_backend,
+            )
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
         self.loss = nn.CrossEntropyLoss()
         self.cosine_lr_list = cosine_scheduler(1, 0.1, max_epochs, niter_per_ep, warmup_epochs=10)
         self.accuracy = torchmetrics.Accuracy('multiclass', num_classes = config.n_classes)
@@ -151,6 +163,11 @@ def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=N
         elif args.accelerator == 'mps':
             trainer = pl.Trainer(strategy='auto', accelerator='mps', devices=1, max_epochs=max_epochs, callbacks=[], 
                             enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False)
+        elif args.accelerator == 'cpu':
+            trainer = pl.Trainer(strategy='auto', accelerator='cpu', devices=1, max_epochs=max_epochs, callbacks=[],
+                            enable_progress_bar=True, enable_checkpointing=False, precision=32, logger=False)
+        else:
+            raise ValueError(f"Unknown accelerator: {args.accelerator}")
         trainer.fit(model, train_dataloaders=train_loader)
 
         # Test data is used only once
@@ -177,9 +194,31 @@ def main():
     # but switch to gpu whenever Nvidia GPU is available
     args.add_argument('--accelerator', type=str, default='mps')
     args.add_argument('--folds', type=str, default='0-15')
-    args.add_argument('--model', choices=['transformer', 'mamba2'], default='transformer')
+    args.add_argument('--model', choices=['transformer', 'mamba2', 'sincmamba'], default='transformer')
     args.add_argument('--use_spatial_projection', type=str2bool, default=True)
+    args.add_argument('--sinc_filters', type=int, default=8)
+    args.add_argument('--sinc_kernel', type=int, default=65)
+    args.add_argument('--sinc_d_model', type=int, default=64)
+    args.add_argument('--sinc_backend', choices=['mamba', 'transformer'], default='mamba')
     args = args.parse_args()
+
+    if args.accelerator == 'mps' and not torch.backends.mps.is_available():
+        raise RuntimeError('MPS accelerator requested, but MPS is not available.')
+
+    if args.model == 'mamba2':
+        if not torch.cuda.is_available():
+            raise RuntimeError('Mamba2 requires CUDA, but no CUDA device is available.')
+        if args.accelerator != 'gpu':
+            raise ValueError('Mamba2 requires --accelerator gpu.')
+
+    if args.model == 'sincmamba' and args.sinc_backend == 'mamba':
+        if not torch.cuda.is_available():
+            raise RuntimeError('SincMamba (mamba backend) requires CUDA, but no CUDA device is available.')
+        if args.accelerator != 'gpu':
+            raise ValueError('SincMamba (mamba backend) requires --accelerator gpu.')
+    if args.model == 'sincmamba' and args.sinc_backend == 'transformer':
+        if args.accelerator == 'gpu' and not torch.cuda.is_available():
+            raise RuntimeError('Transformer backend requested with --accelerator gpu, but no CUDA device is available.')
 
     if '-' in args.folds:
         start, end = [int(x) for x in args.folds.split('-')]
@@ -228,6 +267,15 @@ def main():
             mamba_headdim=64,
             mamba_ngroups=1,
             use_spatial_projection=args.use_spatial_projection,
+        )
+    elif args.model == 'sincmamba':
+        config = PretrainedConfig(
+            n_classes=5,
+            num_electrodes=len(Electrodes),
+            num_sinc_filters=args.sinc_filters,
+            sinc_kernel=args.sinc_kernel,
+            d_model=args.sinc_d_model,
+            sinc_backend=args.sinc_backend,
         )
         
     X, Y = load_standardized_h5('Processed/BCIC2020Track3.h5')

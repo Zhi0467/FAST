@@ -10,6 +10,12 @@
 # Ensure the script stops on error
 set -e
 
+if [ ! -f "Processed/BCIC2020Track3.h5" ]; then
+    echo "Missing Processed/BCIC2020Track3.h5. Run:"
+    echo "  uv run python BCIC2020Track3_preprocess.py"
+    exit 1
+fi
+
 # Loop through models
 for model in "transformer" "mamba2"; do
     # Loop through spatial projection settings
@@ -38,4 +44,3 @@ for model in "transformer" "mamba2"; do
 done
 
 echo "All configurations completed successfully."
-
