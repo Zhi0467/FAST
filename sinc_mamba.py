@@ -10,7 +10,14 @@ except Exception as exc:  # pragma: no cover
     _MAMBA_IMPORT_ERROR = exc
 
 
-def _build_sincnet_options(input_len, sample_rate, num_sinc_filters, sinc_kernel):
+def _build_sincnet_options(
+    input_len,
+    sample_rate,
+    num_sinc_filters,
+    sinc_kernel,
+    min_low_hz,
+    min_band_hz,
+):
     return {
         "cnn_N_filt": [num_sinc_filters, num_sinc_filters, num_sinc_filters],
         "cnn_len_filt": [sinc_kernel, 5, 5],
@@ -23,16 +30,33 @@ def _build_sincnet_options(input_len, sample_rate, num_sinc_filters, sinc_kernel
         "cnn_use_batchnorm": [False, False, False],
         "input_dim": int(input_len),
         "fs": sample_rate,
+        "min_low_hz": min_low_hz,
+        "min_band_hz": min_band_hz,
     }
+
+
+class MambaBlock(nn.Module):
+    def __init__(self, d_model, d_state, expand):
+        super().__init__()
+        if Mamba is None:  # pragma: no cover
+            raise ImportError(
+                "Failed to import mamba_ssm.Mamba. Install mamba-ssm first.\n"
+                f"Original error:\n{_MAMBA_IMPORT_ERROR}"
+            )
+        self.norm = nn.LayerNorm(d_model)
+        self.mamba = Mamba(d_model=d_model, d_state=d_state, expand=expand)
+
+    def forward(self, x):
+        return x + self.mamba(self.norm(x))
 
 
 class EEG_SincMamba(nn.Module):
     def __init__(
         self,
         num_electrodes=64,
-        num_sinc_filters=8,
+        num_sinc_filters=32,
         sinc_kernel=65,
-        d_model=64,
+        d_model=128,
         num_classes=2,
         input_len=800,
         sample_rate=250,
@@ -40,13 +64,25 @@ class EEG_SincMamba(nn.Module):
         transformer_layers=4,
         transformer_heads=None,
         transformer_dropout=0.1,
+        mamba_layers=4,
+        mamba_d_state=64,
+        mamba_expand=2,
+        min_low_hz=1.0,
+        min_band_hz=1.0,
     ):
         super().__init__()
         self.backend = backend
         self.num_electrodes = num_electrodes
         self.input_len = input_len
 
-        options = _build_sincnet_options(input_len, sample_rate, num_sinc_filters, sinc_kernel)
+        options = _build_sincnet_options(
+            input_len,
+            sample_rate,
+            num_sinc_filters,
+            sinc_kernel,
+            min_low_hz,
+            min_band_hz,
+        )
         self.sinc_block = SincNet(options)
         self.sinc_channels = int(options["cnn_N_filt"][-1])
         if self.sinc_block.out_dim % self.sinc_channels != 0:
@@ -67,12 +103,9 @@ class EEG_SincMamba(nn.Module):
         )
 
         if self.backend == "mamba":
-            if Mamba is None:  # pragma: no cover
-                raise ImportError(
-                    "Failed to import mamba_ssm.Mamba. Install mamba-ssm first.\n"
-                    f"Original error:\n{_MAMBA_IMPORT_ERROR}"
-                )
-            self.mamba = Mamba(d_model=d_model, d_state=16, expand=2)
+            self.mamba = nn.ModuleList(
+                [MambaBlock(d_model=d_model, d_state=mamba_d_state, expand=mamba_expand) for _ in range(mamba_layers)]
+            )
             self.transformer = None
         elif self.backend == "transformer":
             if transformer_heads is None:
@@ -112,7 +145,8 @@ class EEG_SincMamba(nn.Module):
         x = self.spatial_mix(x)
         x = x.permute(0, 2, 1)
         if self.backend == "mamba":
-            x = self.mamba(x)
+            for layer in self.mamba:
+                x = layer(x)
         else:
             x = self.transformer(x)
         x = x.mean(dim=1)

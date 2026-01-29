@@ -87,7 +87,7 @@ class SincConv_fast(nn.Module):
         self.min_band_hz = min_band_hz
 
         # initialize filterbanks such that they are equally spaced in Mel scale
-        low_hz = 30
+        low_hz = self.min_low_hz
         high_hz = self.sample_rate / 2 - (self.min_low_hz + self.min_band_hz)
 
         mel = np.linspace(self.to_mel(low_hz),
@@ -381,6 +381,8 @@ class SincNet(nn.Module):
        self.input_dim=int(options['input_dim'])
        
        self.fs=options['fs']
+       self.min_low_hz = options.get('min_low_hz', 50)
+       self.min_band_hz = options.get('min_band_hz', 50)
        
        self.N_cnn_lay=len(options['cnn_N_filt'])
        self.conv  = nn.ModuleList([])
@@ -416,7 +418,13 @@ class SincNet(nn.Module):
             
 
          if i==0:
-          self.conv.append(SincConv_fast(self.cnn_N_filt[0],self.cnn_len_filt[0],self.fs))
+          self.conv.append(SincConv_fast(
+              self.cnn_N_filt[0],
+              self.cnn_len_filt[0],
+              self.fs,
+              min_low_hz=self.min_low_hz,
+              min_band_hz=self.min_band_hz,
+          ))
               
          else:
           self.conv.append(nn.Conv1d(self.cnn_N_filt[i-1], self.cnn_N_filt[i], self.cnn_len_filt[i]))

@@ -23,7 +23,7 @@ import torchmetrics
 import logging
 import h5py
 import einops
-from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
 from transformers import PretrainedConfig
 import lightning as pl
 logging.getLogger('pytorch_lightning').setLevel(logging.WARNING)
@@ -99,7 +99,8 @@ class BasicDataset(Dataset):
     def __init__(self, data, label):
         if len(data.shape) == 4:
             data, label = np.concatenate(data, axis=0), np.concatenate(label, axis=0)
-        self.data, self.labels = torch.from_numpy(data), torch.from_numpy(label)
+        self.data = torch.from_numpy(data).float()
+        self.labels = torch.from_numpy(label).long()
 
     def __len__(self):
         return len(self.data)
@@ -127,6 +128,10 @@ class EEG_Encoder_Module(pl.LightningModule):
                 input_len=config.seq_len,
                 sample_rate=getattr(config, "sinc_fs", 250),
                 backend=config.sinc_backend,
+                transformer_layers=getattr(config, "sinc_layers", 4),
+                mamba_layers=getattr(config, "sinc_layers", 4),
+                min_low_hz=getattr(config, "sinc_min_low_hz", 1.0),
+                min_band_hz=getattr(config, "sinc_min_band_hz", 1.0),
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
@@ -149,20 +154,26 @@ class EEG_Encoder_Module(pl.LightningModule):
 def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=None, model_type='transformer'):
     seed_all(42)
     Pred, Real = [], []
-    kf = KFold(n_splits=5, shuffle=False)
-    for split_idx, (_train_idx, _test_idx) in enumerate(kf.split(Data_X), start=1):
+    kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    for split_idx, (_train_idx, _test_idx) in enumerate(kf.split(Data_X, Data_Y), start=1):
         x_train, y_train = Data_X[_train_idx], Data_Y[_train_idx]
         x_test, y_test = Data_X[_test_idx], Data_Y[_test_idx]
         print(f"KFold split {split_idx}/5: train={len(x_train)} test={len(x_test)}")
 
-        num_workers = 0 if args.accelerator == 'cpu' else os.cpu_count()
+        if args.num_workers is not None:
+            num_workers = args.num_workers
+        else:
+            num_workers = 0 if args.accelerator == 'cpu' else os.cpu_count()
         persistent_workers = num_workers > 0
         pin_memory = args.accelerator == 'gpu'
+
+        train_batch_size = len(x_train) if args.batch_size is None else args.batch_size
+        test_batch_size = len(x_test) if args.batch_size is None else args.batch_size
 
         train_data = BasicDataset(x_train, y_train)
         train_loader = DataLoader(
             train_data,
-            batch_size=len(x_train),
+            batch_size=train_batch_size,
             shuffle=True,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
@@ -171,7 +182,7 @@ def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=N
         test_data = BasicDataset(x_test, y_test)
         test_loader = DataLoader(
             test_data,
-            batch_size=len(x_test),
+            batch_size=test_batch_size,
             shuffle=False,
             num_workers=num_workers,
             persistent_workers=persistent_workers,
@@ -185,11 +196,11 @@ def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=N
         print(yellow(logf), green(ckpt_pretrain), x_train.shape, y_train.shape, x_test.shape, y_test.shape)
         if args.accelerator == 'gpu':
             trainer = pl.Trainer(strategy='auto', accelerator='gpu', devices=[args.gpu], max_epochs=max_epochs, callbacks=[], 
-                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False,
+                            enable_progress_bar=True, enable_checkpointing=False, precision=32, logger=False,
                             log_every_n_steps=args.log_every_n_steps)
         elif args.accelerator == 'mps':
             trainer = pl.Trainer(strategy='auto', accelerator='mps', devices=1, max_epochs=max_epochs, callbacks=[], 
-                            enable_progress_bar=True, enable_checkpointing=False, precision='bf16-mixed', logger=False,
+                            enable_progress_bar=True, enable_checkpointing=False, precision=32, logger=False,
                             log_every_n_steps=args.log_every_n_steps)
         elif args.accelerator == 'cpu':
             trainer = pl.Trainer(strategy='auto', accelerator='cpu', devices=1, max_epochs=max_epochs, callbacks=[],
@@ -201,6 +212,8 @@ def Finetune(args, config, Data_X, Data_Y, logf, max_epochs=200, ckpt_pretrain=N
 
         # Test data is used only once
         pred, real = inference_on_loader(model.model, test_loader)
+        split_acc = float(np.mean(pred == real))
+        print(f"KFold split {split_idx}/5 test accuracy: {split_acc:.4f}")
         Pred.append(pred)
         Real.append(real)
     Pred, Real = np.concatenate(Pred), np.concatenate(Real)
@@ -227,10 +240,15 @@ def main():
     args.add_argument('--use_spatial_projection', type=str2bool, default=True)
     args.add_argument('--max_epochs', type=int, default=200)
     args.add_argument('--log_every_n_steps', type=int, default=1)
-    args.add_argument('--sinc_filters', type=int, default=8)
+    args.add_argument('--batch_size', type=int, default=None)
+    args.add_argument('--sinc_filters', type=int, default=32)
     args.add_argument('--sinc_kernel', type=int, default=65)
-    args.add_argument('--sinc_d_model', type=int, default=64)
+    args.add_argument('--sinc_d_model', type=int, default=128)
     args.add_argument('--sinc_backend', choices=['mamba', 'transformer'], default='mamba')
+    args.add_argument('--sinc_layers', type=int, default=4)
+    args.add_argument('--sinc_min_low_hz', type=float, default=1.0)
+    args.add_argument('--sinc_min_band_hz', type=float, default=1.0)
+    args.add_argument('--num_workers', type=int, default=None)
     args = args.parse_args()
 
     if args.accelerator == 'mps' and not torch.backends.mps.is_available():
@@ -312,6 +330,9 @@ def main():
             sinc_backend=args.sinc_backend,
             seq_len=input_len,
             sinc_fs=sfreq,
+            sinc_layers=args.sinc_layers,
+            sinc_min_low_hz=args.sinc_min_low_hz,
+            sinc_min_band_hz=args.sinc_min_band_hz,
         )
 
     for fold in range(15):
